@@ -1,199 +1,208 @@
 #include "LLMInference.h"
 #include <android/log.h>
+#include <sstream>
 #include <cstring>
 
 #define TAG "LLMInference"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
-LLMInference::LLMInference() {
-    llama_backend_init();
+// ── Lifecycle ─────────────────────────────────────────────────────────────────
+
+LLMContext* llm_create() {
+    return new LLMContext();
 }
 
-LLMInference::~LLMInference() {
-    freeAll();
-    llama_backend_free();
+void llm_destroy(LLMContext* lc) {
+    if (!lc) return;
+    llm_abort(lc);
+    if (lc->sampler) { llama_sampler_free(lc->sampler); lc->sampler = nullptr; }
+    if (lc->ctx)     { llama_free(lc->ctx);              lc->ctx     = nullptr; }
+    if (lc->model)   { llama_free_model(lc->model);      lc->model   = nullptr; }
+    delete lc;
 }
 
-void LLMInference::freeAll() {
-    if (_sampler) { llama_sampler_free(_sampler); _sampler = nullptr; }
-    if (_ctx)     { llama_free(_ctx);              _ctx     = nullptr; }
-    if (_model)   { llama_free_model(_model);      _model   = nullptr; }
-}
+// ── Load / query ──────────────────────────────────────────────────────────────
 
-bool LLMInference::loadModel(const std::string& modelPath, int nCtx, int nThreads) {
-    freeAll();
-    _history.clear();
+bool llm_load_model(LLMContext* lc, const char* model_path, int n_ctx, int n_threads) {
+    if (!lc) return false;
 
-    // ── Load model ───────────────────────────────────────────────────────────
+    // Release previous model if any
+    if (lc->sampler) { llama_sampler_free(lc->sampler); lc->sampler = nullptr; }
+    if (lc->ctx)     { llama_free(lc->ctx);              lc->ctx     = nullptr; }
+    if (lc->model)   { llama_free_model(lc->model);      lc->model   = nullptr; }
+
+    lc->n_ctx     = n_ctx;
+    lc->n_threads = n_threads;
+
     llama_model_params mparams = llama_model_default_params();
-    mparams.n_gpu_layers = 0;
+    mparams.n_gpu_layers = 0;   // CPU-only
 
-    _model = llama_load_model_from_file(modelPath.c_str(), mparams);
-    if (!_model) {
-        LOGE("Failed to load model from: %s", modelPath.c_str());
+    lc->model = llama_load_model_from_file(model_path, mparams);
+    if (!lc->model) {
+        LOGE("Failed to load model from: %s", model_path);
         return false;
     }
 
-    // ── Create context ───────────────────────────────────────────────────────
     llama_context_params cparams = llama_context_default_params();
-    cparams.n_ctx     = static_cast<uint32_t>(nCtx);
-    cparams.n_batch   = 512;
-    cparams.n_ubatch  = 512;
-    cparams.n_threads = static_cast<uint32_t>(nThreads);
+    cparams.n_ctx       = (uint32_t)n_ctx;
+    cparams.n_threads   = n_threads;
+    cparams.n_threads_batch = n_threads;
 
-    _ctx = llama_new_context_with_model(_model, cparams);
-    if (!_ctx) {
+    lc->ctx = llama_new_context_with_model(lc->model, cparams);
+    if (!lc->ctx) {
         LOGE("Failed to create context");
-        llama_free_model(_model);
-        _model = nullptr;
+        llama_free_model(lc->model);
+        lc->model = nullptr;
         return false;
     }
 
-    // ── Build sampler chain ──────────────────────────────────────────────────
+    // Build sampler chain
     llama_sampler_chain_params sparams = llama_sampler_chain_default_params();
-    sparams.no_perf = true;
-    _sampler = llama_sampler_chain_init(sparams);
-    llama_sampler_chain_add(_sampler, llama_sampler_init_min_p(0.05f, 1));
-    llama_sampler_chain_add(_sampler, llama_sampler_init_temp(0.8f));
-    llama_sampler_chain_add(_sampler, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
+    lc->sampler = llama_sampler_chain_init(sparams);
+    llama_sampler_chain_add(lc->sampler, llama_sampler_init_min_p(0.05f, 1));
+    llama_sampler_chain_add(lc->sampler, llama_sampler_init_temp(0.8f));
+    llama_sampler_chain_add(lc->sampler, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
 
-    LOGI("Model loaded OK — ctx=%d threads=%d", nCtx, nThreads);
+    lc->loaded_path = std::string(model_path);
+    LOGI("Model loaded: %s  ctx=%d  threads=%d", model_path, n_ctx, n_threads);
     return true;
 }
 
-void LLMInference::setSystemPrompt(const std::string& p) { _systemPrompt = p; }
-
-void LLMInference::addMessage(const std::string& role, const std::string& content) {
-    _history.push_back({role, content});
+bool llm_is_loaded(LLMContext* lc) {
+    return lc && lc->model && lc->ctx;
 }
 
-void LLMInference::clearHistory() {
-    _history.clear();
-    if (_ctx) llama_kv_cache_clear(_ctx);
+const char* llm_get_model_path(LLMContext* lc) {
+    if (!lc || lc->loaded_path.empty()) return nullptr;
+    return lc->loaded_path.c_str();
 }
 
-std::string LLMInference::buildPrompt(bool addAssistantTurn) {
-    // Build llama_chat_message array from our stored history
-    std::vector<llama_chat_message> msgs;
+void llm_set_system_prompt(LLMContext* lc, const char* /*prompt*/) {
+    // System prompt is injected via message list — no-op here
+}
 
-    if (!_systemPrompt.empty()) {
-        msgs.push_back({"system", _systemPrompt.c_str()});
+void llm_clear_history(LLMContext* lc) {
+    if (lc && lc->ctx) {
+        llama_kv_cache_clear(lc->ctx);
     }
-    for (const auto& m : _history) {
-        msgs.push_back({m.role.c_str(), m.content.c_str()});
+}
+
+// ── Inference ─────────────────────────────────────────────────────────────────
+
+void llm_run_inference(LLMContext* lc,
+                       const char** roles,
+                       const char** contents,
+                       int n_messages,
+                       int max_new_tokens,
+                       std::function<void(const char*)> token_cb,
+                       std::function<void()>            done_cb,
+                       std::function<void(const char*)> error_cb)
+{
+    if (!llm_is_loaded(lc)) {
+        error_cb("Model not loaded");
+        return;
     }
 
-    // Size the buffer generously
-    std::vector<char> buf(16384);
-    int32_t n = llama_chat_apply_template(
-        _model,
-        nullptr,           // use template baked into model
+    lc->abort_flag.store(false);
+
+    // Build llama_chat_message array
+    std::vector<llama_chat_message> msgs(n_messages);
+    for (int i = 0; i < n_messages; i++) {
+        msgs[i].role    = roles[i];
+        msgs[i].content = contents[i];
+    }
+
+    // Apply chat template
+    std::vector<char> buf(65536);
+    int len = llama_chat_apply_template(
+        lc->model,
+        nullptr,           // use model's built-in template
         msgs.data(),
-        (int32_t)msgs.size(),
-        addAssistantTurn,  // append assistant turn prefix when generating
+        (size_t)n_messages,
+        true,              // add_ass
         buf.data(),
         (int32_t)buf.size()
     );
-
-    if (n < 0) {
-        LOGE("llama_chat_apply_template failed — using raw last message");
-        return _history.empty() ? "" : _history.back().content;
+    if (len < 0) {
+        error_cb("Chat template failed");
+        return;
     }
-
-    if (n > (int32_t)buf.size()) {
-        buf.resize(static_cast<size_t>(n) + 1);
-        llama_chat_apply_template(
-            _model, nullptr,
-            msgs.data(), (int32_t)msgs.size(),
-            addAssistantTurn,
+    if (len > (int)buf.size()) {
+        buf.resize(len + 1);
+        len = llama_chat_apply_template(
+            lc->model, nullptr,
+            msgs.data(), (size_t)n_messages, true,
             buf.data(), (int32_t)buf.size()
         );
     }
-
-    return std::string(buf.data(), static_cast<size_t>(n));
-}
-
-bool LLMInference::generate(
-    const std::string& userMessage,
-    std::function<void(const std::string&)> tokenCallback,
-    std::function<void()> doneCallback,
-    int maxNewTokens)
-{
-    if (!_model || !_ctx || !_sampler) {
-        LOGE("generate() called with no model loaded");
-        return false;
-    }
-
-    _abortFlag = false;
-
-    // Add user message, build full prompt
-    addMessage("user", userMessage);
-    std::string prompt = buildPrompt(/*addAssistantTurn=*/true);
+    std::string prompt(buf.data(), len);
 
     // Tokenise
-    int nPrompt = -llama_tokenize(
-        _model, prompt.c_str(), (int32_t)prompt.size(),
-        nullptr, 0, /*add_special=*/true, /*parse_special=*/true);
-
-    std::vector<llama_token> tokens(static_cast<size_t>(nPrompt));
-    if (llama_tokenize(_model, prompt.c_str(), (int32_t)prompt.size(),
-                       tokens.data(), (int32_t)tokens.size(),
-                       /*add_special=*/true, /*parse_special=*/true) < 0) {
-        LOGE("Tokenisation failed");
-        return false;
+    const int n_vocab = llama_n_vocab(lc->model);
+    std::vector<llama_token> tokens(prompt.size() + 16);
+    int n_tokens = llama_tokenize(
+        lc->model,
+        prompt.c_str(), (int32_t)prompt.size(),
+        tokens.data(), (int32_t)tokens.size(),
+        true,   // add_special
+        true    // parse_special
+    );
+    if (n_tokens < 0) {
+        error_cb("Tokenization failed");
+        return;
     }
+    tokens.resize(n_tokens);
 
-    // Decode prompt
-    llama_batch batch = llama_batch_get_one(tokens.data(), (int32_t)tokens.size());
-    if (llama_decode(_ctx, batch) != 0) {
-        LOGE("Prompt decode failed");
-        return false;
-    }
-
-    // Generation loop
-    std::string response;
-    std::vector<char> piece(64);
-
-    for (int i = 0; i < maxNewTokens && !_abortFlag; ++i) {
-        llama_token token = llama_sampler_sample(_sampler, _ctx, -1);
-
-        if (llama_token_is_eog(_model, token)) break;
-
-        // Convert token to text piece
-        int32_t n = llama_token_to_piece(
-            _model, token,
-            piece.data(), (int32_t)piece.size(),
-            /*lstrip=*/0, /*special=*/true);
-
-        if (n < 0) {
-            piece.resize(static_cast<size_t>(-n) + 1);
-            n = llama_token_to_piece(
-                _model, token,
-                piece.data(), (int32_t)piece.size(),
-                0, true);
+    // Prefill
+    llama_kv_cache_clear(lc->ctx);
+    {
+        llama_batch batch = llama_batch_get_one(tokens.data(), (int32_t)tokens.size());
+        if (llama_decode(lc->ctx, batch) != 0) {
+            error_cb("Prefill decode failed");
+            return;
         }
-        if (n <= 0) break;
+    }
 
-        std::string tokenStr(piece.data(), static_cast<size_t>(n));
-        response += tokenStr;
-        tokenCallback(tokenStr);
+    // Generate
+    std::string piece_buf;
+    piece_buf.resize(256);
 
-        // Feed token back for next step
-        llama_sampler_accept(_sampler, token);
+    for (int i = 0; i < max_new_tokens; i++) {
+        if (lc->abort_flag.load()) break;
+
+        llama_token token = llama_sampler_sample(lc->sampler, lc->ctx, -1);
+        llama_sampler_accept(lc->sampler, token);
+
+        if (llama_token_is_eog(lc->model, token)) break;
+
+        // Detokenise single token
+        int piece_len = llama_token_to_piece(
+            lc->model, token,
+            piece_buf.data(), (int32_t)piece_buf.size(),
+            0, true
+        );
+        if (piece_len < 0) {
+            piece_buf.resize(-piece_len);
+            piece_len = llama_token_to_piece(
+                lc->model, token,
+                piece_buf.data(), (int32_t)piece_buf.size(),
+                0, true
+            );
+        }
+        if (piece_len > 0) {
+            std::string piece(piece_buf.data(), piece_len);
+            token_cb(piece.c_str());
+        }
+
+        // Decode next token position
         llama_batch next = llama_batch_get_one(&token, 1);
-        if (llama_decode(_ctx, next) != 0) {
-            LOGE("Decode failed at step %d", i);
-            break;
-        }
+        if (llama_decode(lc->ctx, next) != 0) break;
     }
 
-    addMessage("assistant", response);
-    llama_sampler_reset(_sampler);
-    doneCallback();
-    return true;
+    done_cb();
 }
 
-void LLMInference::abort() {
-    _abortFlag = true;
+void llm_abort(LLMContext* lc) {
+    if (lc) lc->abort_flag.store(true);
 }
