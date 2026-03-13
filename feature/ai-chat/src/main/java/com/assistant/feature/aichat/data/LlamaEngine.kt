@@ -1,15 +1,17 @@
 package com.assistant.feature.aichat.data
 
-import android.util.Log
+import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
-
-private const val TAG = "LlamaEngine"
 
 data class ChatMessage(
     val role: String,    // "system" | "user" | "assistant"
@@ -17,93 +19,133 @@ data class ChatMessage(
 )
 
 data class ModelParams(
-    val nCtx: Int         = 4096,
-    val temperature: Float = 0.8f,
-    val topP: Float        = 0.95f,
+    val nCtx: Int          = 2048,
+    val temperature: Float = 0.7f,
+    val topP: Float        = 0.9f,
     val topK: Int          = 40,
-    val maxNewTokens: Int  = 2048,
-    val nThreads: Int      = 0,   // 0 = auto (half cores)
+    val maxNewTokens: Int  = 512,
+    val nThreads: Int      = 0,    // 0 = auto
 )
-
-interface TokenCallback {
-    fun onToken(token: String)
-    fun onDone()
-    fun onError(message: String)
-}
 
 @Singleton
 class LlamaEngine @Inject constructor() {
 
-    private var nativeHandle: Long = 0L
-
-    val isLoaded: Boolean
-        get() = nativeIsLoaded(nativeHandle)
-
-    val loadedModelPath: String?
-        get() = if (isLoaded) nativeGetModelPath(nativeHandle) else null
-
-    init {
-        System.loadLibrary("assistant_llm")
-        nativeHandle = nativeCreate()
+    companion object {
+        init {
+            System.loadLibrary("assistant_llm")
+        }
     }
+
+    // JNI declarations
+    private external fun nativeCreate(): Long
+    private external fun nativeLoadModel(
+        ptr: Long,
+        fd: Int, offset: Long, length: Long,
+        nCtx: Int, temperature: Float, topP: Float, topK: Int,
+        maxNewTokens: Int, nThreads: Int,
+    ): Boolean
+    private external fun nativeRunInference(
+        ptr: Long,
+        roles: Array<String>,
+        contents: Array<String>,
+        callback: TokenCallback,
+    )
+    private external fun nativeCancel(ptr: Long)
+    private external fun nativeRelease(ptr: Long)
+    private external fun nativeDestroy(ptr: Long)
+    private external fun nativeIsLoaded(ptr: Long): Boolean
+
+    interface TokenCallback {
+        fun onToken(token: String)
+    }
+
+    private val mutex = Mutex()
+    private var nativePtr: Long = 0L
+    private var currentModelPath: String? = null
+
+    val isLoaded: Boolean get() = nativePtr != 0L && nativeIsLoaded(nativePtr)
+    val loadedModelPath: String? get() = currentModelPath
 
     suspend fun loadModel(
-        modelPath: String,
+        context: Context,
+        modelFile: File,
         params: ModelParams = ModelParams(),
-    ): Result<Unit> = withContext(Dispatchers.IO) {
-        Log.i(TAG, "loadModel: $modelPath")
-        val threads = if (params.nThreads <= 0)
-            (Runtime.getRuntime().availableProcessors() / 2).coerceAtLeast(1)
-        else params.nThreads
-        val ok = nativeLoadModel(nativeHandle, modelPath, params.nCtx, threads)
-        if (ok) Result.success(Unit)
-        else Result.failure(RuntimeException("Failed to load model: $modelPath"))
+    ): Result<Unit> = mutex.withLock {
+        withContext(Dispatchers.IO) {
+            try {
+                if (nativePtr != 0L) {
+                    nativeRelease(nativePtr)
+                    nativeDestroy(nativePtr)
+                    nativePtr = 0L
+                    currentModelPath = null
+                }
+
+                nativePtr = nativeCreate()
+
+                val pfd = android.os.ParcelFileDescriptor.open(
+                    modelFile,
+                    android.os.ParcelFileDescriptor.MODE_READ_ONLY,
+                )
+
+                val success = nativeLoadModel(
+                    nativePtr,
+                    pfd.fd,
+                    0L,
+                    modelFile.length(),
+                    params.nCtx,
+                    params.temperature,
+                    params.topP,
+                    params.topK,
+                    params.maxNewTokens,
+                    params.nThreads,
+                )
+
+                pfd.close()
+
+                if (success) {
+                    currentModelPath = modelFile.absolutePath
+                    Result.success(Unit)
+                } else {
+                    nativeDestroy(nativePtr)
+                    nativePtr = 0L
+                    Result.failure(IllegalStateException("MODEL_LOAD_FAILED"))
+                }
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
     }
 
-    fun setSystemPrompt(prompt: String) = nativeSetSystemPrompt(nativeHandle, prompt)
+    fun runInference(messages: List<ChatMessage>): Flow<String> = callbackFlow {
+        val roles    = messages.map { it.role }.toTypedArray()
+        val contents = messages.map { it.content }.toTypedArray()
 
-    fun clearHistory() = nativeClearHistory(nativeHandle)
-
-    /**
-     * Run inference over a full message list (system + history + user).
-     * Returns a Flow that emits tokens as they are generated.
-     */
-    fun runInference(messages: List<ChatMessage>, maxNewTokens: Int = 2048): Flow<String> =
-        callbackFlow {
-            if (!isLoaded) {
-                close(IllegalStateException("No model loaded"))
-                return@callbackFlow
-            }
-            val roles    = messages.map { it.role }.toTypedArray()
-            val contents = messages.map { it.content }.toTypedArray()
-            val cb = object : TokenCallback {
-                override fun onToken(token: String) { trySend(token) }
-                override fun onDone()  { close() }
-                override fun onError(message: String) { close(RuntimeException(message)) }
-            }
-            withContext(Dispatchers.IO) {
-                nativeRunInference(nativeHandle, roles, contents, cb, maxNewTokens)
-            }
-            awaitClose { nativeAbort(nativeHandle) }
+        val callback = object : TokenCallback {
+            override fun onToken(token: String) { trySend(token) }
         }
 
-    fun cancelInference() = nativeAbort(nativeHandle)
-
-    fun releaseModel() {
-        if (nativeHandle != 0L) {
-            nativeDestroy(nativeHandle)
-            nativeHandle = nativeCreate()
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                nativeRunInference(nativePtr, roles, contents, callback)
+            }
         }
+
+        close()
+        awaitClose()
+    }.flowOn(Dispatchers.IO)
+
+    suspend fun cancelInference() = withContext(Dispatchers.IO) {
+        if (nativePtr != 0L) nativeCancel(nativePtr)
     }
 
-    // ── JNI ──────────────────────────────────────────────────────────────────
-    private external fun nativeCreate(): Long
-    private external fun nativeDestroy(handle: Long)
-    private external fun nativeLoadModel(handle: Long, modelPath: String, nCtx: Int, nThreads: Int): Boolean
-    private external fun nativeIsLoaded(handle: Long): Boolean
-    private external fun nativeGetModelPath(handle: Long): String?
-    private external fun nativeSetSystemPrompt(handle: Long, prompt: String)
-    private external fun nativeClearHistory(handle: Long)
-    private external fun nativeRunInference(handle: Long, roles: Array<String>, contents: Array<String>, callback: TokenCallback, maxNewTokens: Int)
-    private external fun nativeAbort(handle: Long)
+    suspend fun releaseModel() = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            if (nativePtr != 0L) {
+                nativeRelease(nativePtr)
+                nativeDestroy(nativePtr)
+                nativePtr = 0L
+                currentModelPath = null
+            }
+        }
+    }
 }

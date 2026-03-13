@@ -11,6 +11,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -39,7 +40,7 @@ fun ModelPickerScreen(
             .background(colors.background)
             .scanlineOverlay()
     ) {
-        // Geo background
+        // Geo background decoration
         Box(
             modifier = Modifier
                 .size(350.dp)
@@ -84,36 +85,29 @@ fun ModelPickerScreen(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                // Catalog entries
                 items(ModelCatalog.entries) { entry ->
                     val isBestFit = entry.id == state.bestFitId
-                    val activeDownload = state.activeDownloads.firstOrNull {
-                        it.url == entry.downloadUrl
-                    }
+                    val activeDownload = state.activeDownloads.firstOrNull { it.url == entry.downloadUrl }
                     CatalogEntryCard(
-                        entry         = entry,
-                        isBestFit     = isBestFit,
+                        entry          = entry,
+                        isBestFit      = isBestFit,
                         activeDownload = activeDownload,
-                        onDownload    = { viewModel.downloadCatalogEntry(entry) },
+                        onDownload     = { viewModel.downloadCatalogEntry(entry) },
                     )
                 }
 
-                // HUD divider
-                item {
-                    HudDivider("CUSTOM DIRECT LINK", colors.textMuted)
-                }
+                item { HudDivider("CUSTOM DIRECT LINK", colors.textMuted) }
 
-                // Custom URL input
                 item {
                     CustomUrlSection(
-                        url           = customUrl,
-                        name          = customName,
-                        error         = customError,
-                        expanded      = showCustomInput,
-                        onToggle      = { showCustomInput = !showCustomInput },
-                        onUrlChange   = { customUrl = it; customError = "" },
-                        onNameChange  = { customName = it },
-                        onDownload    = {
+                        url          = customUrl,
+                        name         = customName,
+                        error        = customError,
+                        expanded     = showCustomInput,
+                        onToggle     = { showCustomInput = !showCustomInput },
+                        onUrlChange  = { customUrl = it; customError = "" },
+                        onNameChange = { customName = it },
+                        onDownload   = {
                             val ok = viewModel.downloadCustomUrl(customUrl, customName.ifBlank { "Custom Model" })
                             if (!ok) customError = "INVALID — URL MUST END IN .gguf"
                             else { customUrl = ""; customName = "" }
@@ -121,7 +115,6 @@ fun ModelPickerScreen(
                     )
                 }
 
-                // Skip if downloads are active
                 if (state.activeDownloads.any { it.status == "COMPLETE" }) {
                     item {
                         Box(
@@ -154,21 +147,18 @@ private fun CatalogEntryCard(
 
     val borderColor = if (isBestFit) colors.accentText else colors.border
 
-    // Pulsing border animation for best fit
     val infiniteTransition = rememberInfiniteTransition(label = "bestfit")
     val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue = if (isBestFit) 1.0f else 1.0f,
-        targetValue  = if (isBestFit) 0.4f else 1.0f,
+        initialValue  = if (isBestFit) 1.0f else 1.0f,
+        targetValue   = if (isBestFit) 0.4f else 1.0f,
         animationSpec = infiniteRepeatable(tween(1200, easing = EaseInOut), RepeatMode.Reverse),
-        label = "pulse",
+        label         = "pulse",
     )
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(
-                if (isBestFit) colors.accentGlow else colors.backgroundPanel
-            )
+            .background(if (isBestFit) colors.accentGlow else colors.backgroundPanel)
             .border(
                 width = if (isBestFit) 2.dp else 1.dp,
                 color = borderColor.copy(alpha = if (isBestFit) pulseAlpha else 1f),
@@ -182,11 +172,18 @@ private fun CatalogEntryCard(
             verticalAlignment = Alignment.Top,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     Text(entry.displayName.uppercase(), style = typography.subhead, color = colors.textPrimary)
                     if (isBestFit) {
-                        Text("BEST FIT", style = typography.hudSmall, color = colors.accentText,
-                            modifier = Modifier.background(colors.accentGlow).padding(horizontal = 4.dp))
+                        Text(
+                            "BEST FIT",
+                            style    = typography.hudSmall,
+                            color    = colors.accentText,
+                            modifier = Modifier.background(colors.accentGlow).padding(horizontal = 4.dp),
+                        )
                     }
                 }
                 Spacer(Modifier.height(4.dp))
@@ -201,19 +198,18 @@ private fun CatalogEntryCard(
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             StatChip("SIZE", "${entry.fileSizeBytes / 1_000_000_000L}.${(entry.fileSizeBytes % 1_000_000_000L) / 100_000_000L} GB")
-            StatChip("RAM", "${entry.ramRequiredBytes / 1_000_000_000L}.${(entry.ramRequiredBytes % 1_000_000_000L) / 100_000_000L} GB")
+            StatChip("RAM",  "${entry.ramRequiredBytes / 1_000_000_000L}.${(entry.ramRequiredBytes % 1_000_000_000L) / 100_000_000L} GB")
             StatChip("SPEED", entry.speedEstimate)
         }
 
         Spacer(Modifier.height(12.dp))
 
-        // Download state
         when {
             activeDownload?.status == "COMPLETE" -> {
                 Text("DOWNLOAD COMPLETE", style = typography.hud, color = colors.accent)
             }
             activeDownload?.status in listOf("ACTIVE", "QUEUED") -> {
-                val pct = if ((activeDownload?.totalBytes ?: 0) > 0) {
+                val pct = if ((activeDownload?.totalBytes ?: 0L) > 0L) {
                     (activeDownload!!.bytesDownloaded * 100 / activeDownload.totalBytes).toInt()
                 } else 0
                 Column {
@@ -229,7 +225,8 @@ private fun CatalogEntryCard(
             activeDownload?.status == "PAUSED" -> {
                 Text(
                     "PAUSED — ${activeDownload.bytesDownloaded / 1_000_000L} MB / ${activeDownload.totalBytes / 1_000_000L} MB",
-                    style = typography.hud, color = colors.orange,
+                    style = typography.hud,
+                    color = colors.orange,
                 )
             }
             activeDownload?.status == "FAILED" -> {
@@ -250,21 +247,21 @@ private fun StatChip(label: String, value: String) {
     val typography = AssistantTheme.typography
     Column {
         Text(label, style = typography.hudSmall, color = colors.textMuted)
-        Text(value, style = typography.hud, color = colors.textPrimary)
+        Text(value, style = typography.hud,      color = colors.textPrimary)
     }
 }
 
+// Simplified — callers pass (label, color, onClick) directly
 @Composable
-private fun DownloadButton(label: String, color: com.assistant.core.theme.AssistantColors.() -> androidx.compose.ui.graphics.Color = { accent }, colorValue: androidx.compose.ui.graphics.Color, onClick: () -> Unit) {
-    val colors = AssistantTheme.colors
+private fun DownloadButton(label: String, color: Color, onClick: () -> Unit) {
     val typography = AssistantTheme.typography
     Box(
         modifier = Modifier
-            .border(1.dp, colorValue)
+            .border(1.dp, color)
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 6.dp)
     ) {
-        Text(label, style = typography.hud, color = colorValue)
+        Text(label, style = typography.hud, color = color)
     }
 }
 
@@ -295,20 +292,20 @@ private fun CustomUrlSection(
         if (expanded) {
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(
-                value        = url,
+                value         = url,
                 onValueChange = onUrlChange,
-                modifier     = Modifier.fillMaxWidth(),
-                placeholder  = { Text("https://...model.gguf", style = typography.hud, color = colors.textMuted) },
-                label        = { Text("DOWNLOAD URL", style = typography.hudSmall, color = colors.textMuted) },
-                textStyle    = typography.hud.copy(color = colors.textPrimary),
-                isError      = error.isNotBlank(),
-                colors       = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = colors.accentText,
+                modifier      = Modifier.fillMaxWidth(),
+                placeholder   = { Text("https://...model.gguf", style = typography.hud, color = colors.textMuted) },
+                label         = { Text("DOWNLOAD URL", style = typography.hudSmall, color = colors.textMuted) },
+                textStyle     = typography.hud.copy(color = colors.textPrimary),
+                isError       = error.isNotBlank(),
+                colors        = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor   = colors.accentText,
                     unfocusedBorderColor = colors.border,
-                    errorBorderColor = colors.red,
-                    cursorColor = colors.accentText,
+                    errorBorderColor     = colors.red,
+                    cursorColor          = colors.accentText,
                 ),
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(2.dp),
+                shape      = androidx.compose.foundation.shape.RoundedCornerShape(2.dp),
                 singleLine = true,
             )
             if (error.isNotBlank()) {
@@ -316,17 +313,17 @@ private fun CustomUrlSection(
             }
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
-                value        = name,
+                value         = name,
                 onValueChange = onNameChange,
-                modifier     = Modifier.fillMaxWidth(),
-                placeholder  = { Text("DISPLAY NAME", style = typography.hud, color = colors.textMuted) },
-                textStyle    = typography.hud.copy(color = colors.textPrimary),
-                colors       = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = colors.accentText,
+                modifier      = Modifier.fillMaxWidth(),
+                placeholder   = { Text("DISPLAY NAME", style = typography.hud, color = colors.textMuted) },
+                textStyle     = typography.hud.copy(color = colors.textPrimary),
+                colors        = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor   = colors.accentText,
                     unfocusedBorderColor = colors.border,
-                    cursorColor = colors.accentText,
+                    cursorColor          = colors.accentText,
                 ),
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(2.dp),
+                shape      = androidx.compose.foundation.shape.RoundedCornerShape(2.dp),
                 singleLine = true,
             )
             Spacer(Modifier.height(12.dp))
