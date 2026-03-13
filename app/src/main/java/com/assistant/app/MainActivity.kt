@@ -10,6 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.navigation.compose.rememberNavController
 import com.assistant.core.navigation.AppNavHost
 import com.assistant.core.theme.AssistantTheme
+import com.assistant.feature.aichat.ui.aiChatNavGraph
 import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
@@ -24,7 +25,10 @@ class MainActivity : ComponentActivity() {
                     color = AssistantTheme.colors.background
                 ) {
                     val navController = rememberNavController()
-                    AppNavHost(navController = navController)
+                    // App shell wires feature nav graphs — core:navigation never touches features
+                    AppNavHost(navController = navController) { nav ->
+                        aiChatNavGraph(nav)
+                    }
                 }
             }
         }

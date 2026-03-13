@@ -4,9 +4,8 @@ import androidx.compose.runtime.Composable
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 
-// Route constants — shared across all modules
+// Route constants — shared across all modules via core:navigation
 object Routes {
-    // feature:ai-chat routes
     const val CHAT_LIST         = "chat_list"
     const val CHAT              = "chat/{chatId}"
     const val MODEL_PICKER      = "model_picker"
@@ -16,20 +15,18 @@ object Routes {
     fun chatRoute(chatId: String) = "chat/$chatId"
 }
 
+// AppNavHost takes the nav graph builder as a lambda —
+// the app shell passes in feature registrations without core knowing about features.
 @Composable
 fun AppNavHost(
     navController: NavHostController,
+    startDestination: String = "ai_chat_graph",
+    builder: androidx.navigation.NavGraphBuilder.(NavHostController) -> Unit,
 ) {
-    // The start destination is determined at runtime by the feature module:
-    // - If no model downloaded → MODEL_PICKER
-    // - Otherwise → CHAT_LIST
-    // This is handled inside the feature:ai-chat nav graph registration.
     NavHost(
-        navController = navController,
-        startDestination = "ai_chat_graph",
+        navController    = navController,
+        startDestination = startDestination,
     ) {
-        // Feature modules register their own nav graphs here via extension functions.
-        // The app shell calls this — features never reference each other.
-        aiChatNavGraph(navController)
+        builder(navController)
     }
 }
