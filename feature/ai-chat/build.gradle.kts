@@ -17,7 +17,7 @@ android {
             cmake {
                 cppFlags("-std=c++17", "-O3", "-DNDEBUG")
                 arguments(
-                    "-DGGML_VULKAN=ON",
+                    "-DGGML_VULKAN=OFF",
                     "-DGGML_OPENMP=ON",
                     "-DLLAMA_BUILD_TESTS=OFF",
                     "-DLLAMA_BUILD_EXAMPLES=OFF",

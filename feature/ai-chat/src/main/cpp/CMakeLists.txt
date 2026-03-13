@@ -11,18 +11,17 @@ FetchContent_Declare(
     llama_cpp
     GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
     GIT_TAG        b3447
-    GIT_SHALLOW    FALSE   # Must be FALSE for commit-based pin (not a tag)
+    GIT_SHALLOW    FALSE
     GIT_PROGRESS   TRUE
 )
 
-# Disable everything we don't need to keep build fast + clean
 set(LLAMA_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_SERVER   OFF CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS    OFF CACHE BOOL "" FORCE)
 
-# Vulkan GPU acceleration — runtime-detected, silently falls back to CPU if unavailable
-option(GGML_VULKAN "Enable Vulkan backend" ON)
+# Vulkan disabled — vulkan-shaders-gen not available in CI / most Android targets
+set(GGML_VULKAN OFF CACHE BOOL "" FORCE)
 
 # OpenMP for multi-core CPU parallelism
 option(GGML_OPENMP "Enable OpenMP" ON)
@@ -50,7 +49,6 @@ target_link_libraries(assistant_llm
     log
 )
 
-# Link OpenMP if available
 find_package(OpenMP)
 if(OpenMP_CXX_FOUND)
     target_link_libraries(assistant_llm OpenMP::OpenMP_CXX)
