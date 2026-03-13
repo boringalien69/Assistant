@@ -29,6 +29,13 @@ jobs:
           echo "NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> $GITHUB_ENV
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> $GITHUB_ENV
 
+      - name: Download Gradle wrapper jar
+        run: |
+          mkdir -p gradle/wrapper
+          curl -sL "https://github.com/gradle/gradle/raw/v8.7.0/gradle/wrapper/gradle-wrapper.jar" \
+            -o gradle/wrapper/gradle-wrapper.jar
+          echo "Wrapper jar size: $(du -sh gradle/wrapper/gradle-wrapper.jar)"
+
       - name: Cache Gradle packages
         uses: actions/cache@v4
         with:
@@ -41,16 +48,9 @@ jobs:
       - name: Cache llama.cpp source
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.llama_cpp_cache
-            ${{ github.workspace }}/feature/ai-chat/src/main/cpp/llama.cpp
+          path: ~/.cmake/packages
           key: llama-cpp-b3447
           restore-keys: llama-cpp-
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: "8.7"
 
       - name: Build debug APK
         run: |
