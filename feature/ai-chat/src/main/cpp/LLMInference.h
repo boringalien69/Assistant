@@ -1,54 +1,51 @@
 #pragma once
 
+#include "llama.h"
 #include <string>
 #include <vector>
 #include <functional>
-#include <atomic>
-#include "llama.h"
-
-struct LLMParams {
-    int   n_ctx          = 2048;
-    float temperature    = 0.7f;
-    float top_p          = 0.9f;
-    int   top_k          = 40;
-    int   max_new_tokens = 512;
-    int   n_threads      = 0;       // 0 = auto (half available cores)
-};
-
-struct ChatMessage {
-    std::string role;    // "system" | "user" | "assistant"
-    std::string content;
-};
 
 class LLMInference {
 public:
     LLMInference();
     ~LLMInference();
 
-    // Load model from file descriptor (avoids copying large GGUF files)
-    bool loadModel(int fd, long offset, long length, const LLMParams& params);
+    // Load model from file path
+    bool loadModel(const std::string& modelPath, int nCtx, int nThreads);
 
-    // Run inference — tokenCallback fires for each output token
-    // Returns false if cancelled or error
-    bool runInference(
-        const std::vector<ChatMessage>& messages,
-        std::function<void(const std::string&)> tokenCallback
+    // Set system prompt
+    void setSystemPrompt(const std::string& systemPrompt);
+
+    // Add a message to chat history
+    void addMessage(const std::string& role, const std::string& content);
+
+    // Clear chat history (keep system prompt)
+    void clearHistory();
+
+    // Run inference; calls tokenCallback for each new token string, returns false on error
+    bool generate(
+        const std::string& userMessage,
+        std::function<void(const std::string&)> tokenCallback,
+        std::function<void()> doneCallback,
+        int maxNewTokens = 2048
     );
 
-    // Signal cancel — thread-safe, checked in inference loop
-    void cancelInference();
+    // Abort ongoing generation
+    void abort();
 
-    // Free native memory
-    void release();
-
-    bool isLoaded() const;
+    bool isLoaded() const { return _model != nullptr; }
 
 private:
-    llama_model*   model_   = nullptr;
-    llama_context* ctx_     = nullptr;
-    LLMParams      params_;
-    std::atomic<bool> cancelFlag_{false};
+    llama_model*   _model   = nullptr;
+    llama_context* _ctx     = nullptr;
+    llama_sampler* _sampler = nullptr;
 
-    std::string applyTemplate(const std::vector<ChatMessage>& messages);
-    int  autoThreadCount();
+    std::string _systemPrompt;
+    std::vector<llama_chat_message> _messages;
+    std::vector<std::string>        _msgStorage; // owns the string data pointed to by _messages
+
+    volatile bool _abortFlag = false;
+
+    void freeModel();
+    std::string applyTemplate();
 };
