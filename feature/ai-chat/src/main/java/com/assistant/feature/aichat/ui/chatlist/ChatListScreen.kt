@@ -15,6 +15,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -78,14 +79,14 @@ fun ChatListScreen(
         )
 
         Column(modifier = Modifier.fillMaxSize()) {
-            // ── TOP BAR ──────────────────────────────────────────────────────
+            // ── TOP BAR ──────────────────────────────────────────────────────────────────
             HudTopBar(
                 isModelLoaded   = state.isModelLoaded,
                 activeModelName = state.activeModelName,
                 onModelTap      = onOpenModelLibrary,
             )
 
-            // ── CHAT LIST ─────────────────────────────────────────────────────
+            // ── CHAT LIST ────────────────────────────────────────────────────────────────
             LazyColumn(
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(bottom = 88.dp),
@@ -174,7 +175,7 @@ fun ChatListScreen(
             }
         }
 
-        // ── NEW SESSION BUTTON ─────────────────────────────────────────────
+        // ── NEW SESSION BUTTON ───────────────────────────────────────────────────────────
         HudNewChatButton(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
@@ -182,7 +183,7 @@ fun ChatListScreen(
             onClick  = onNewChat,
         )
 
-        // ── ERROR BANNER ──────────────────────────────────────────────────
+        // ── ERROR BANNER ─────────────────────────────────────────────────────────────────
         state.error?.let { err ->
             Box(
                 modifier = Modifier
@@ -218,14 +219,12 @@ private fun HudTopBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        // Left — App identity
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("ASSISTANT", style = typography.subhead, color = colors.textPrimary)
             Box(modifier = Modifier.width(1.dp).height(16.dp).background(colors.borderHard))
             Text("v1.0", style = typography.hudSmall, color = colors.textMuted)
         }
 
-        // Right — Model status
         Row(
             modifier = Modifier
                 .clickable(onClick = onModelTap)
@@ -287,7 +286,6 @@ private fun PinnedChatItem(
                     onLongPress = { showMenu = true },
                 )
             }
-            // Crosshair background overlay
             .drawBehind {
                 val lineColor = accentColor.copy(alpha = 0.05f)
                 drawLine(lineColor, Offset(size.width / 2, 0f), Offset(size.width / 2, size.height), 1f)
@@ -333,7 +331,7 @@ private fun TrendingChatItem(
         modifier = Modifier
             .fillMaxWidth()
             .background(colors.backgroundPanel)
-            .border(start = 3.dp, color = colors.purple)
+            .borderStart(3.dp, colors.purple)
             .pointerInput(Unit) {
                 detectTapGestures(
                     onTap = { onClick() },
@@ -389,7 +387,7 @@ private fun RegularChatItem(
             .fillMaxWidth()
             .background(colors.background)
             .then(
-                if (isExpiring) Modifier.border(start = 3.dp, color = colors.orange)
+                if (isExpiring) Modifier.borderStart(3.dp, colors.orange)
                 else Modifier
             )
             .pointerInput(Unit) {
@@ -438,25 +436,19 @@ private fun ChatItemContent(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 12.dp)
-            .border(bottom = 1.dp, color = colors.border),
+            .borderBottom(1.dp, colors.border),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        // Icon slot
         Box(
             modifier = Modifier
                 .size(32.dp)
                 .border(1.dp, colors.border),
             contentAlignment = Alignment.Center,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .background(dotColor)
-            )
+            Box(modifier = Modifier.size(8.dp).background(dotColor))
         }
 
-        // Content
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = conv.title.uppercase(),
@@ -466,35 +458,25 @@ private fun ChatItemContent(
                 overflow = TextOverflow.Ellipsis,
             )
             Spacer(Modifier.height(2.dp))
-            Text(
-                text = formatMeta(conv),
-                style = typography.hudSmall,
-                color = metaColor,
-            )
-            expiryWarning?.let {
-                Text(it, style = typography.hudSmall, color = colors.orange)
-            }
+            Text(text = formatMeta(conv), style = typography.hudSmall, color = metaColor)
+            expiryWarning?.let { Text(it, style = typography.hudSmall, color = colors.orange) }
         }
 
-        // Right side
         Column(horizontalAlignment = Alignment.End) {
-            badge?.let {
-                Text(it, style = typography.hudSmall, color = badgeColor)
-            }
+            badge?.let { Text(it, style = typography.hudSmall, color = badgeColor) }
             Text("${conv.messageCount} MSGS", style = typography.hudSmall, color = metaColor)
         }
     }
 
-    // Context menu
     if (showMenu) {
         DropdownMenu(
-            expanded  = showMenu,
+            expanded         = showMenu,
             onDismissRequest = onDismissMenu,
-            modifier = Modifier.background(colors.backgroundPanel2),
+            modifier         = Modifier.background(colors.backgroundPanel2),
         ) {
             menuItems.forEach { action ->
                 DropdownMenuItem(
-                    text = { Text(action.label, style = typography.hud, color = action.color) },
+                    text    = { Text(action.label, style = typography.hud, color = action.color) },
                     onClick = { action.onClick(); onDismissMenu() },
                 )
             }
@@ -506,10 +488,10 @@ private fun formatMeta(conv: ConversationEntity): String {
     val now = System.currentTimeMillis()
     val diff = now - conv.lastActiveAt
     val timeStr = when {
-        diff < 60_000                    -> "JUST NOW"
-        diff < 3_600_000                 -> "${diff / 60_000} MIN AGO"
-        diff < 86_400_000                -> "${diff / 3_600_000} HRS AGO"
-        else                             -> "${diff / 86_400_000} DAYS AGO"
+        diff < 60_000     -> "JUST NOW"
+        diff < 3_600_000  -> "${diff / 60_000} MIN AGO"
+        diff < 86_400_000 -> "${diff / 3_600_000} HRS AGO"
+        else              -> "${diff / 86_400_000} DAYS AGO"
     }
     return "LAST ACTIVE: $timeStr"
 }
@@ -524,16 +506,16 @@ private fun RenameDialog(current: String, onConfirm: (String) -> Unit, onDismiss
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = colors.backgroundPanel2,
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(2.dp),
-        title = { Text("RENAME THREAD", style = typography.subhead, color = colors.accentText) },
+        containerColor   = colors.backgroundPanel2,
+        shape            = androidx.compose.foundation.shape.RoundedCornerShape(2.dp),
+        title            = { Text("RENAME THREAD", style = typography.subhead, color = colors.accentText) },
         text = {
             OutlinedTextField(
-                value = text,
+                value         = text,
                 onValueChange = { if (it.length <= 60) text = it },
-                textStyle = typography.hud.copy(color = colors.textPrimary),
-                singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
+                textStyle     = typography.hud.copy(color = colors.textPrimary),
+                singleLine    = true,
+                colors        = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor   = colors.accentText,
                     unfocusedBorderColor = colors.border,
                     cursorColor          = colors.accentText,
@@ -569,11 +551,12 @@ private fun HudNewChatButton(modifier: Modifier, onClick: () -> Unit) {
     }
 }
 
-// Helper extension for start-border only
-private fun Modifier.border(start: Dp, color: Color): Modifier = this.drawBehind {
-    drawLine(color, Offset(start.toPx() / 2, 0f), Offset(start.toPx() / 2, size.height), start.toPx())
+// ── Named extension helpers (avoid shadowing Compose's border() overloads) ───
+
+private fun Modifier.borderStart(width: Dp, color: Color): Modifier = this.drawBehind {
+    drawLine(color, Offset(width.toPx() / 2, 0f), Offset(width.toPx() / 2, size.height), width.toPx())
 }
 
-private fun Modifier.border(bottom: Dp, color: Color): Modifier = this.drawBehind {
-    drawLine(color, Offset(0f, size.height), Offset(size.width, size.height), bottom.toPx())
+private fun Modifier.borderBottom(width: Dp, color: Color): Modifier = this.drawBehind {
+    drawLine(color, Offset(0f, size.height), Offset(size.width, size.height), width.toPx())
 }
